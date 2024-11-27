@@ -10,6 +10,7 @@ from tkinter.ttk import Treeview
 from PIL import Image, ImageTk
 import os.path, shutil, uuid
 from time import time
+import logging
 
 from io_utils import *
 
@@ -332,7 +333,13 @@ class MerlinMainTree(MerlinTree):
 
     def add_menu(self):
         current_node = self.selection()
-        iid = self.insert(self.parent(current_node), self.index(current_node)+1, text=' \u25AE Nouveau Menu', tags="directory")
+        tt = self.set(current_node,'type')
+        if tt== '2' or tt == '6' :
+            #current selection is a directory, insert a child
+            iid = self.insert(current_node, 0, text=' \u25AE Nouveau Menu', tags="directory")
+        else:
+            #current selection is a file, insert at the same level
+            iid = self.insert(self.parent(current_node), self.index(current_node)+1, text=' \u25AE Nouveau Menu', tags="directory")
         self.set(iid, 'type', '6')
         self.set(iid, 'add_time', str(int(time())))
         self.set(iid, 'title', 'Nouveau Menu')
@@ -342,60 +349,63 @@ class MerlinMainTree(MerlinTree):
         self.update()
         self.rootGUI.title_entry.focus_set()
 
+    def find_common_prefix_and_suffix(self,basenames):
+        common_prefix = None
+        common_suffix = None
+        for basename in basenames:
+            if common_prefix is None:
+                common_prefix = basename
+                common_suffix = basename[::-1]
+            else:
+                common_prefix = os.path.commonprefix([common_prefix, basename])
+                common_suffix = os.path.commonprefix([common_suffix, basename[::-1]])
+        return common_prefix, common_suffix[::-1]
+    def shorten_filename(self,filename, trim_prefix, trim_suffix):
+        if filename.startswith(trim_prefix):
+            filename = filename[len(trim_prefix):]
+        if filename.endswith(trim_suffix):
+            filename = filename[:-len(trim_suffix)]
+        fb = filename.encode('UTF-8')
+        if len(fb) > 60:
+            fb = fb[:60]
+        return fb.decode('UTF-8')
+
+
     def add_sound(self):
         current_node = self.selection()
+        tt = self.set(current_node,'type')
+        if tt== '2' or tt == '6' :
+            #current selection is a directory, insert a child
+            parent_node = current_node
+            insert_index = 9999999
+        else:
+            #current selection is not a directory, insert at the same level
+            parent_node = self.parent(current_node)
+            insert_index = self.index(current_node)+1
+
         playlist_dirname = os.path.dirname(self.rootGUI.playlistpath)
         filepaths = filedialog.askopenfilename(initialdir=playlist_dirname, filetypes=[('mp3', '*.mp3')], multiple=True)
         if not filepaths:
             return
+        common_prefix, common_suffix = self.find_common_prefix_and_suffix(filepaths)
+
         for filepath in filepaths:
             dirname, basename = os.path.split(filepath)
-            # if dirname != playlist_dirname:
-                # answer = tk.messagebox.askyesnocancel("Copier Fichier?", "Copier le fichier dans le dossier de la playlist ?")
-                # if answer is None:
-                    # return
-                # elif answer:
-                    # new_filepath = playlist_dirname + basename
-                    # if os.path.exists(new_filepath):
-                        # answer = tk.messagebox.askokcancel("Fichier existant", "Le fichier existe déjà. L'écraser ?")
-                        # if not answer:
-                            # return
-                    # shutil.copyfile(filepath, new_filepath)
-                    # filepath = new_filepath
-                    # dirname, basename = os.path.split(filepath)        
-            uuid, ext = os.path.splitext(basename)
-            # check length
-            b = uuid.encode('UTF-8')
-            new_filepath = filepath
-            while len(b)>64:
-                b = b[:65]
-                valid = False
-                while not valid:
-                    b = b[:-1]
-                    try:
-                        new_root = b.decode('UTF-8')
-                        valid = uuid.startswith(new_root)
-                    except UnicodeError:
-                        pass
-                new_basename = newroot + ext
-                answer = tk.messagebox.askokcancel("Nom de fichier trop long", f"Le nom de fichier '{basename}' est trop long.\nLe copier sous un nouveau nom ?")
-                if not answer:
-                    return
-                new_filepath = tk.filedialog.asksaveasfilename(initialdir=dirname, initialfile=new_basename, filetypes=[('mp3', '*.mp3')], multiple=False)
-                if not new_filepath:
-                    return
-                new_dirname, new_basename = os.path.split(new_filepath)
-                new_uuid, ext = os.path.splitext(new_basename)
-                b = new_uuid.encode('UTF-8')
-            if new_filepath != filepath:
-                uuid = new_uuid
-                filepath = new_filepath                
-                shutil.copyfile(filepath, new_filepath)
-            iid = self.insert(self.parent(current_node), self.index(current_node)+1, text=' \u266A ' + uuid, tags='sound')
+            if dirname == playlist_dirname:
+                continue
+            display_name = self.shorten_filename(filepath, common_prefix, common_suffix)
+
+            new_uuid = str(uuid.uuid4())
+            new_basename = new_uuid+".mp3"
+            new_filepath = os.path.join(playlist_dirname,new_basename)
+            shutil.copyfile(filepath, new_filepath)
+            logging.warning("copied %s to %s", filepath, new_filepath)
+            
+            iid = self.insert(parent_node, insert_index, text=' \u266A ' + display_name, tags='sound')
             self.set(iid, 'type', '4')
-            self.set(iid, 'soundpath', filepath)
+            self.set(iid, 'soundpath', new_filepath)
             self.set(iid, 'add_time', str(int(time())))
-            self.set(iid, 'uuid', uuid)
+            self.set(iid, 'uuid', new_uuid)
         if len(filepaths)==1:
             self.focus(iid)
             self.selection_set(iid)

@@ -258,7 +258,8 @@ class MerlinGUI(GUIActions):
                 
     def load_image(self):
         filename = "merlinator_64px.ico"
-        with zipfile.ZipFile('../res/defaultPics.zip', 'r') as zfile:
+        dir_of_merlinator = os.path.dirname(os.path.realpath(__file__))
+        with zipfile.ZipFile(os.path.join(dir_of_merlinator,'../res/defaultPics.zip'), 'r') as zfile:
             zippath = zipfile.Path(zfile, at=filename)
             if zippath.exists():
                 with zfile.open(filename, 'r', pwd=info) as imagefile:

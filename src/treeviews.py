@@ -11,6 +11,8 @@ from PIL import Image, ImageTk
 import os.path, shutil, uuid
 from time import time
 import logging
+from pydub import AudioSegment
+from mutagen.mp3 import MP3
 
 from io_utils import *
 
@@ -102,17 +104,18 @@ class MerlinMainTree(MerlinTree):
            "fav_order", "type", "limit_time", "add_time", 
            "uuid", "title")
 
+    dir_of_merlinator = os.path.dirname(os.path.realpath(__file__))
     rootItem = {'id': 1, 'parent_id': 0, 'order': 0, 'nb_children': 0, 
                 'fav_order': 0, 'type': 1, 'limit_time': 0, 'add_time': 0, 
                 'uuid': '', 'title': 'Root', 'imagepath': '', 'soundpath': ''}
     favItem = {'id': 2, 'parent_id': 1, 'order': 0, 'nb_children': 0,
                'fav_order': 0, 'type': 10, 'limit_time': 0, 'add_time': 0, 
                'uuid': 'cd6949db-7c5f-486a-aa2b-48a80a7950d5', 'title': 'Merlin_favorite', 
-               'imagepath': '../res/defaultPics.zip', 'soundpath': ''}
+               'imagepath': os.path.join(dir_of_merlinator,'../res/defaultPics.zip'), 'soundpath': ''}
     recentItem = {'id': 3, 'parent_id': 1, 'order': 1, 'nb_children': 0, 
                   'fav_order': 0, 'type': 18, 'limit_time': 0, 'add_time': 0, 
                   'uuid': '8794f486-c461-4ace-a44b-85c359f84017', 'title': 'Merlin_discover', 
-                  'imagepath': '../res/defaultPics.zip', 'soundpath': ''}
+                  'imagepath':os.path.join(dir_of_merlinator,'../res/defaultPics.zip'), 'soundpath': ''}
     defaultItems = [rootItem, favItem, recentItem]
     
     def __init__(self, parent, root=None):
@@ -350,6 +353,8 @@ class MerlinMainTree(MerlinTree):
         self.rootGUI.title_entry.focus_set()
 
     def find_common_prefix_and_suffix(self,basenames):
+        if len(basenames) < 2:
+            return None, None
         common_prefix = None
         common_suffix = None
         for basename in basenames:
@@ -361,10 +366,13 @@ class MerlinMainTree(MerlinTree):
                 common_suffix = os.path.commonprefix([common_suffix, basename[::-1]])
         return common_prefix, common_suffix[::-1]
     def shorten_filename(self,filename, trim_prefix, trim_suffix):
-        if filename.startswith(trim_prefix):
-            filename = filename[len(trim_prefix):]
-        if filename.endswith(trim_suffix):
-            filename = filename[:-len(trim_suffix)]
+        if trim_prefix is None and trim_suffix is None:
+            filename = os.path.splitext(os.path.basename(filename))[0]
+        else:
+            if trim_prefix is not None and filename.startswith(trim_prefix):
+                filename = filename[len(trim_prefix):]
+            if trim_suffix is not None and filename.endswith(trim_suffix):
+                filename = filename[:-len(trim_suffix)]
         fb = filename.encode('UTF-8')
         if len(fb) > 60:
             fb = fb[:60]
@@ -384,22 +392,40 @@ class MerlinMainTree(MerlinTree):
             insert_index = self.index(current_node)+1
 
         playlist_dirname = os.path.dirname(self.rootGUI.playlistpath)
-        filepaths = filedialog.askopenfilename(initialdir=playlist_dirname, filetypes=[('mp3', '*.mp3')], multiple=True)
+        filepaths = filedialog.askopenfilename(filetypes=[('mp3', '*.mp3')], multiple=True)
         if not filepaths:
             return
+
+        for filepath in filepaths:
+            dirname = os.path.dirname(filepath)
+            if dirname == playlist_dirname:
+                messagebox.showerror('Error', 'Cannot add sound file from the same directory as the playlist')
+                return
+                
         common_prefix, common_suffix = self.find_common_prefix_and_suffix(filepaths)
 
         for filepath in filepaths:
-            dirname, basename = os.path.split(filepath)
-            if dirname == playlist_dirname:
-                continue
             display_name = self.shorten_filename(filepath, common_prefix, common_suffix)
 
             new_uuid = str(uuid.uuid4())
             new_basename = new_uuid+".mp3"
             new_filepath = os.path.join(playlist_dirname,new_basename)
-            shutil.copyfile(filepath, new_filepath)
-            logging.warning("copied %s to %s", filepath, new_filepath)
+
+            must_convert = True
+            try:
+                audiofile = MP3(filepath)
+                if audiofile.info.bitrate == 128000 and audiofile.info.channels == 2 and audiofile.info.sample_rate == 44100:
+                    must_convert = False
+            except:
+                pass
+            
+            if must_convert:
+                AudioSegment.from_file(filepath).export(new_filepath, format="mp3", bitrate="128k", parameters=["-ac", "2", "-ar", "44100"])    
+                logging.warning("encoded %s to %s", filepath, new_filepath)
+            else:
+                shutil.copyfile(filepath, new_filepath)
+                logging.warning("copied %s to %s", filepath, new_filepath)
+
             
             iid = self.insert(parent_node, insert_index, text=' \u266A ' + display_name, tags='sound')
             self.set(iid, 'type', '4')
@@ -420,93 +446,21 @@ class MerlinMainTree(MerlinTree):
         if uuid:
             initfile = uuid+'.jpg'
         else:
-            initfile = ''
-        filepath = filedialog.askopenfilename(initialdir=playlist_dirname, initialfile=initfile, filetypes=[('images jpg', '*.jpg')])
+            raise Exception("no uuid for node")
+        dest_filepath = os.path.join(playlist_dirname, initfile)
+        filepath = filedialog.askopenfilename(filetypes=[('images', '.jpg .png')])
         if not filepath:
             return
-        with open(filepath, 'rb') as stream:
-            if IsImageProgressive(stream):
-                tk.messagebox.showwarning(title="Problème de format", message=f"Le format de l'image est JPEG 'progressive'. Ce format n'est pas pris en charge par toutes les Merlin.")
-        dirname, basename = os.path.split(filepath)
-        root, ext = os.path.splitext(basename)
-        # check length
-        if self.tag_has('directory', current_node):
-            b = root.encode('UTF-8')
-            new_filepath = filepath
-            while len(b)>64:
-                b = b[:65]
-                valid = False
-                while not valid:
-                    b = b[:-1]
-                    try:
-                        new_root = b.decode('UTF-8')
-                        valid = root.startswith(new_root)
-                    except UnicodeError:
-                        pass
-                new_basename = newroot + ext
-                answer = tk.messagebox.askokcancel("Nom de fichier trop long", f"Le nom de fichier '{basename}' est trop long.\nLe copier sous un nouveau nom ?")
-                if not answer:
-                    return
-                new_filepath = tk.filedialog.asksaveasfilename(initialdir=dirname, initialfile=new_basename, filetypes=[('jpg', '*.jpg')], multiple=False)
-                if not new_filepath:
-                    return
-                new_dirname, new_basename = os.path.split(new_filepath)
-                new_root, ext = os.path.splitext(new_basename)
-                b = new_uuid.encode('UTF-8')
-            if new_filepath != filepath:
-                uuid = new_uuid
-                filepath = new_filepath                
-                shutil.copyfile(filepath, new_filepath)
-            self.set(current_node, 'uuid', uuid)
-        
-        # if self.tag_has('directory', current_node):
-            # if dirname != playlist_dirname:
-                # answer = tk.messagebox.askyesnocancel("Copier Fichier?", "Copier le fichier dans le dossier de la playlist ?")
-                # if answer is None:
-                    # return
-                # elif answer:
-                    # new_filepath = os.path.join(playlist_dirname, basename)
-                    # if os.path.exists(new_filepath):
-                        # answer = tk.messagebox.askokcancel("Fichier existant", f"Le fichier {new_filepath} existe déjà. L'écraser ?")
-                        # if not answer:
-                            # return
-                    # with Image.open(filepath) as image:
-                        # image_thumbnail = image.resize((128,128), Image.ANTIALIAS)
-                        # image_thumbnail.save(new_filepath, "JPEG", mode='RGB')
-                    # filepath = new_filepath
-                    # dirname, basename = os.path.split(filepath)
-            # uuid, ext = os.path.splitext(basename)
-            # self.set(current_node, 'uuid', uuid)
-        # else:
-            # uuid = self.set(current_node, 'uuid')
-            # new_filepath = os.path.join(playlist_dirname, uuid + '.jpg')
-            # mismatch = False
-            # if dirname != playlist_dirname:
-                # mismatch = True
-                # answer = tk.messagebox.askyesnocancel("Copier Fichier?", "Copier le fichier image dans le dossier de la playlist ?")
-            # elif filepath != new_filepath:
-                # mismatch = True
-                # answer = tk.messagebox.askyesnocancel("Copier Fichier?", "Copier et renomer le fichier image ?")
-            # if mismatch:
-                # if answer is None:
-                    # return
-                # elif answer:
-                    # if os.path.exists(new_filepath):
-                        # answer = tk.messagebox.askokcancel("Fichier existant", "Le fichier existe déjà. L'écraser ?")
-                        # if not answer:
-                            # return
-                    # with Image.open(filepath) as image:
-                        # image_thumbnail = image.resize((128,128), Image.ANTIALIAS)
-                        # image_thumbnail.save(new_filepath, "JPEG", mode='RGB')
-                    # filepath = new_filepath
-                    # dirname, basename = os.path.split(filepath)
-                
         with Image.open(filepath) as image:
-            image_small = image.resize((40, 40), Image.ANTIALIAS)
-            self.rootGUI.thumbnails[uuid] = ImageTk.PhotoImage(image_small)
+            image_small = image.convert('RGB').resize((128, 128), Image.ANTIALIAS)
+            image_small.save(dest_filepath, "JPEG", mode='RGB', optimize=False, progressive=False)
+                
+        with Image.open(dest_filepath) as image:
+            icon_small = image_small.resize((40, 40), Image.ANTIALIAS)
+            self.rootGUI.thumbnails[uuid] = ImageTk.PhotoImage(icon_small)
         
         self.item(current_node, image=self.rootGUI.thumbnails[uuid])
-        self.set(current_node, 'imagepath', filepath)
+        self.set(current_node, 'imagepath', dest_filepath)
         self.update()
         
     

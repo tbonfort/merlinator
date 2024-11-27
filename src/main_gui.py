@@ -322,7 +322,7 @@ class MerlinGUI(GUIActions):
         t = self.main_tree
         if not t.get_children(''):
             return
-        filepath = filedialog.asksaveasfilename(initialfile="playlist.bin", filetypes=[('binaire', '*.bin')])
+        filepath = filedialog.asksaveasfilename(initialfile="playlist.bin", initialdir=self.playlistpath, filetypes=[('binaire', '*.bin')])
         try:
             with open(filepath, "wb") as file:
                 items = t.make_item_list()
@@ -348,11 +348,13 @@ class MerlinGUI(GUIActions):
         
     def new_session(self):
         items = MerlinMainTree.defaultItems
-        with zipfile.ZipFile('../res/defaultPics.zip', 'r') as zfile:
+        dir_of_merlinator = os.path.dirname(os.path.realpath(__file__))
+        with zipfile.ZipFile(os.path.join(dir_of_merlinator,'../res/defaultPics.zip'), 'r') as zfile:
             self.load_thumbnails_from_zip(items, zfile)
         self.populate_trees(items, overwrite=True)
         self.buttonAddMenu['state'] = 'normal'
         self.buttonAddSound['state'] = 'normal'
+        self.playlistpath = "."
         
     def save_session(self):
         if not self.sessionfile:
